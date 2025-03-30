@@ -1,6 +1,3 @@
-import 'package:cipherx/home.dart';
-import 'package:cipherx/login.dart';
-import 'package:cipherx/onboarding.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'firebase_options.dart';

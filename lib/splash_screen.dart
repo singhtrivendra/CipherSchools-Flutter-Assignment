@@ -79,7 +79,11 @@ class _SplashScreenState extends State<SplashScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // Logo
-                _buildLogoWidget(80),
+                Image.asset(
+                      'assets/Logo.jpg', // Replace with your logo path
+                      width: 80,
+                      height: 80,
+                    ),
                 
                 SizedBox(height: 20),
                 
@@ -139,20 +143,6 @@ class _SplashScreenState extends State<SplashScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-  
-  // Custom widget to create the logo
-  Widget _buildLogoWidget(double size) {
-    return Container(
-      width: size,
-      height: size,
-      child: Center(
-        child: CustomPaint(
-          size: Size(size, size),
-          painter: LogoPainter(),
-        ),
       ),
     );
   }

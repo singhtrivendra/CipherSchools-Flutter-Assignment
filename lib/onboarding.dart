@@ -32,7 +32,11 @@ class OnboardingScreen extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.topLeft,
                     // Replace Image.asset with a custom logo widget
-                    child: _buildLogoWidget(80),
+                    child: Image.asset(
+                      'assets/Logo.jpg', // Replace with your logo path
+                      width: 80,
+                      height: 80,
+                    ),
                   ),
                 ),
                 
@@ -110,24 +114,6 @@ class OnboardingScreen extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-  
-  // Custom widget to recreate the logo from your screenshot
-  Widget _buildLogoWidget(double size) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: Colors.black, // Logo background
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Center(
-        child: CustomPaint(
-          size: Size(size * 0.7, size * 0.7),
-          painter: LogoPainter(),
-        ),
       ),
     );
   }
