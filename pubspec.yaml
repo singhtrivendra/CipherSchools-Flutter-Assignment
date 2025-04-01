@@ -47,6 +47,8 @@ dependencies:
   get: ^4.7.2
   get_storage: ^2.1.1
   flutter_launcher_icons: ^0.13.1
+  firebase_messaging: ^14.7.10
+  flutter_local_notifications: ^19.0.0
 
 dev_dependencies:
   flutter_test:

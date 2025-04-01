@@ -1,44 +1,270 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+// Model for notifications
+class NotificationItem {
+  final String id;
+  final String title;
+  final String message;
+  final DateTime timestamp;
+  bool isRead;
+  final NotificationType type;
+
+  NotificationItem({
+    required this.id,
+    required this.title,
+    required this.message,
+    required this.timestamp,
+    required this.isRead,
+    required this.type,
+  });
+
+  // Create from Firebase message
+  factory NotificationItem.fromMessage(RemoteMessage message) {
+    // Determine notification type based on message data
+    NotificationType type = NotificationType.system;
+    if (message.data['type'] == 'transaction') {
+      type = NotificationType.transaction;
+    } else if (message.data['type'] == 'alert') {
+      type = NotificationType.alert;
+    }
+
+    return NotificationItem(
+      id: message.messageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: message.notification?.title ?? 'New Notification',
+      message: message.notification?.body ?? '',
+      timestamp: DateTime.now(),
+      isRead: false,
+      type: type,
+    );
+  }
+
+  // Create from Firestore document
+  factory NotificationItem.fromFirestore(DocumentSnapshot doc) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    
+    // Parse the timestamp
+    DateTime timestamp;
+    if (data['timestamp'] is Timestamp) {
+      timestamp = (data['timestamp'] as Timestamp).toDate();
+    } else {
+      timestamp = DateTime.parse(data['timestamp']);
+    }
+
+    // Determine notification type
+    NotificationType type;
+    switch (data['type']) {
+      case 'transaction':
+        type = NotificationType.transaction;
+        break;
+      case 'alert':
+        type = NotificationType.alert;
+        break;
+      default:
+        type = NotificationType.system;
+    }
+
+    return NotificationItem(
+      id: doc.id,
+      title: data['title'] ?? '',
+      message: data['message'] ?? '',
+      timestamp: timestamp,
+      isRead: data['isRead'] ?? false,
+      type: type,
+    );
+  }
+
+  // Convert to Map for Firestore
+  Map<String, dynamic> toMap() {
+    return {
+      'title': title,
+      'message': message,
+      'timestamp': timestamp,
+      'isRead': isRead,
+      'type': type.toString().split('.').last,
+    };
+  }
+}
+
+// Notification types for different icons and colors
+enum NotificationType {
+  transaction,
+  alert,
+  system,
+}
 
 class NotificationPage extends StatefulWidget {
+  final RemoteMessage? initialMessage;
+
+  const NotificationPage({Key? key, this.initialMessage}) : super(key: key);
+
   @override
   _NotificationPageState createState() => _NotificationPageState();
 }
 
 class _NotificationPageState extends State<NotificationPage> {
-  // Sample notification data - in a real app, this would come from a service or database
-  List<NotificationItem> notifications = [
-    NotificationItem(
-      title: "New Transaction Added",
-      message: "You've added ₹2,500.00 to your income.",
-      timestamp: DateTime.now().subtract(Duration(hours: 1)),
-      isRead: false,
-      type: NotificationType.transaction,
-    ),
-    NotificationItem(
-      title: "Budget Alert",
-      message: "You've exceeded your shopping budget by 15%.",
-      timestamp: DateTime.now().subtract(Duration(hours: 5)),
-      isRead: true,
-      type: NotificationType.alert,
-    ),
-    NotificationItem(
-      title: "Account Update",
-      message: "Your account details have been updated successfully.",
-      timestamp: DateTime.now().subtract(Duration(days: 1)),
-      isRead: true,
-      type: NotificationType.system,
-    ),
-    NotificationItem(
-      title: "Welcome to Finance Tracker",
-      message: "Thank you for downloading our app. Start tracking your finances today!",
-      timestamp: DateTime.now().subtract(Duration(days: 2)),
-      isRead: true,
-      type: NotificationType.system,
-    ),
-  ];
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  List<NotificationItem> notifications = [];
+  bool _isLoading = true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifications();
+    _listenForNotifications();
+    
+    // If page was opened from a notification, mark that notification as read
+    if (widget.initialMessage != null) {
+      _handleInitialMessage(widget.initialMessage!);
+    }
+    
+    // Set up Firebase Messaging handlers for when the app is in the foreground
+    FirebaseMessaging.onMessage.listen(_handleNewNotification);
+    
+    // Handle when a notification is tapped while app is in background
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleNewNotification);
+  }
+  
+  void _handleInitialMessage(RemoteMessage message) {
+    if (message.messageId != null) {
+      _firestore
+          .collection('notifications')
+          .where('messageId', isEqualTo: message.messageId)
+          .get()
+          .then((snapshot) {
+        if (snapshot.docs.isNotEmpty) {
+          _firestore
+              .collection('notifications')
+              .doc(snapshot.docs.first.id)
+              .update({'isRead': true});
+        }
+      });
+    }
+  }
+  
+  void _handleNewNotification(RemoteMessage message) {
+    final newNotification = NotificationItem.fromMessage(message);
+    
+    // Update UI immediately
+    setState(() {
+      notifications.insert(0, newNotification);
+    });
+    
+    // Save to Firestore (optional but recommended for persistence)
+    _saveNotificationToFirestore(newNotification);
+  }
+  
+  Future<void> _saveNotificationToFirestore(NotificationItem notification) async {
+    await _firestore.collection('notifications').add(notification.toMap());
+  }
+  
+  Future<void> _loadNotifications() async {
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final snapshot = await _firestore
+          .collection('notifications')
+          .orderBy('timestamp', descending: true)
+          .get();
+      
+      setState(() {
+        notifications = snapshot.docs
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading notifications: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  void _listenForNotifications() {
+    _firestore
+        .collection('notifications')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      setState(() {
+        notifications = snapshot.docs
+            .map((doc) => NotificationItem.fromFirestore(doc))
+            .toList();
+      });
+    });
+  }
+  
+  Future<void> _markAsRead(NotificationItem notification) async {
+    // Find document with matching id
+    final snapshot = await _firestore
+        .collection('notifications')
+        .where(FieldPath.documentId, isEqualTo: notification.id)
+        .get();
+    
+    if (snapshot.docs.isNotEmpty) {
+      await _firestore
+          .collection('notifications')
+          .doc(snapshot.docs.first.id)
+          .update({'isRead': true});
+      
+      setState(() {
+        notification.isRead = true;
+      });
+    }
+  }
+  
+  Future<void> _markAllAsRead() async {
+    // Get all unread notifications
+    final batch = _firestore.batch();
+    final snapshot = await _firestore
+        .collection('notifications')
+        .where('isRead', isEqualTo: false)
+        .get();
+    
+    // Update each document in a batch
+    for (var doc in snapshot.docs) {
+      batch.update(doc.reference, {'isRead': true});
+    }
+    
+    // Commit the batch
+    await batch.commit();
+    
+    // Update UI immediately
+    setState(() {
+      for (var notification in notifications) {
+        notification.isRead = true;
+      }
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('All notifications marked as read'))
+    );
+  }
+  
+  Future<void> _deleteNotification(NotificationItem notification) async {
+    // Find document with matching id
+    final snapshot = await _firestore
+        .collection('notifications')
+        .where(FieldPath.documentId, isEqualTo: notification.id)
+        .get();
+    
+    if (snapshot.docs.isNotEmpty) {
+      await _firestore
+          .collection('notifications')
+          .doc(snapshot.docs.first.id)
+          .delete();
+      
+      setState(() {
+        notifications.remove(notification);
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -62,28 +288,24 @@ class _NotificationPageState extends State<NotificationPage> {
         actions: [
           IconButton(
             icon: Icon(Icons.done_all, color: Colors.purple),
-            onPressed: () {
-              // Mark all as read
-              setState(() {
-                for (var notification in notifications) {
-                  notification.isRead = true;
-                }
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('All notifications marked as read'))
-              );
-            },
+            onPressed: _markAllAsRead,
+          ),
+          IconButton(
+            icon: Icon(Icons.refresh, color: Colors.purple),
+            onPressed: _loadNotifications,
           ),
         ],
       ),
-      body: notifications.isEmpty
-          ? _buildEmptyState()
-          : ListView.builder(
-              itemCount: notifications.length,
-              itemBuilder: (context, index) {
-                return _buildNotificationItem(notifications[index]);
-              },
-            ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : notifications.isEmpty
+              ? _buildEmptyState()
+              : ListView.builder(
+                  itemCount: notifications.length,
+                  itemBuilder: (context, index) {
+                    return _buildNotificationItem(notifications[index]);
+                  },
+                ),
     );
   }
 
@@ -121,7 +343,7 @@ class _NotificationPageState extends State<NotificationPage> {
 
   Widget _buildNotificationItem(NotificationItem notification) {
     return Dismissible(
-      key: Key(notification.timestamp.toString()),
+      key: Key(notification.id),
       background: Container(
         color: Colors.red,
         alignment: Alignment.centerRight,
@@ -130,9 +352,7 @@ class _NotificationPageState extends State<NotificationPage> {
       ),
       direction: DismissDirection.endToStart,
       onDismissed: (direction) {
-        setState(() {
-          notifications.remove(notification);
-        });
+        _deleteNotification(notification);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Notification deleted'))
         );
@@ -140,9 +360,7 @@ class _NotificationPageState extends State<NotificationPage> {
       child: GestureDetector(
         onTap: () {
           // Mark as read when tapped
-          setState(() {
-            notification.isRead = true;
-          });
+          _markAsRead(notification);
           
           // Show full notification details
           showDialog(
@@ -270,28 +488,4 @@ class _NotificationPageState extends State<NotificationPage> {
       return 'Just now';
     }
   }
-}
-
-// Notification data model
-class NotificationItem {
-  final String title;
-  final String message;
-  final DateTime timestamp;
-  bool isRead;
-  final NotificationType type;
-
-  NotificationItem({
-    required this.title,
-    required this.message,
-    required this.timestamp,
-    required this.isRead,
-    required this.type,
-  });
-}
-
-// Notification types for different icons and colors
-enum NotificationType {
-  transaction,
-  alert,
-  system,
 }
